@@ -1,0 +1,34 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  audit:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Symlink the working tree in as a tap so style/audit run against the
+      # commit under test rather than whatever is already published.
+      - name: Install the working tree as a tap
+        run: |
+          set -euo pipefail
+          tapdir="$(brew --repository)/Library/Taps/anothersava/homebrew-tap"
+          mkdir -p "$(dirname "$tapdir")"
+          ln -sfn "$GITHUB_WORKSPACE" "$tapdir"
+          brew tap
+
+      - name: brew style
+        run: brew style --cask anothersava/tap/claude-code-dashboard
+
+      # Deliberately not --new. That flag implies the notability check (this
+      # repo is well under the fork/watcher/star bar) and the signing check
+      # (the upstream build is ad-hoc signed, not notarized) — both of which
+      # this cask knowingly does not meet, and neither of which affects
+      # whether `brew install` works from a third-party tap.
+      - name: brew audit
+        run: brew audit --cask --strict --online anothersava/tap/claude-code-dashboard

@@ -1,0 +1,67 @@
+name: Bump cask
+
+# Fired by the app repo when it publishes a release (repository_dispatch), or
+# by hand for a backfill. The commit goes through the Contents API rather than
+# `git push` so it lands GitHub-verified without a signing key in CI.
+
+on:
+  repository_dispatch:
+    types: [claude-code-dashboard-release]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to bump to, with or without the leading v
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      UPSTREAM: AnotherSava/claude-code-dashboard
+      CASK: Casks/claude-code-dashboard.rb
+      RAW_VERSION: ${{ github.event.client_payload.version || inputs.version }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # The digest the release API reports is the real file's sha256 — no need
+      # to download the DMG just to hash it.
+      - name: Resolve the published DMG digest
+        run: |
+          set -euo pipefail
+          version="${RAW_VERSION#v}"
+          digest=$(gh api "repos/$UPSTREAM/releases/tags/v$version" \
+            --jq '.assets[] | select(.name | endswith("aarch64.dmg")) | .digest')
+          if [ -z "$digest" ]; then
+            echo "::error::no aarch64 .dmg asset on tag v$version"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "SHA256=${digest#sha256:}" >> "$GITHUB_ENV"
+
+      - name: Rewrite the cask
+        run: |
+          set -euo pipefail
+          sed -i -E "s|^  version \".*\"$|  version \"$VERSION\"|" "$CASK"
+          sed -i -E "s|^  sha256 \".*\"$|  sha256 \"$SHA256\"|" "$CASK"
+          if git diff --quiet -- "$CASK"; then
+            echo "cask already at $VERSION, nothing to do"
+            echo "CHANGED=false" >> "$GITHUB_ENV"
+          else
+            git diff -- "$CASK"
+            echo "CHANGED=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Commit the bump
+        if: env.CHANGED == 'true'
+        run: |
+          set -euo pipefail
+          gh api --method PUT "repos/${{ github.repository }}/contents/$CASK" \
+            -f message="chore: bump claude-code-dashboard to $VERSION" \
+            -f content="$(base64 -w0 "$CASK")" \
+            -f sha="$(git rev-parse "HEAD:$CASK")" \
+            -f branch=main
