@@ -34,11 +34,14 @@ cask "claude-code-dashboard" do
   # The launch has to come after the strip or macOS refuses it. It is also
   # deliberate: this is a menu-bar app with no Dock icon, so an install that
   # ends without starting it leaves nothing on screen and nothing to click.
-  # must_succeed is off so a refused launch cannot fail an otherwise good
-  # install -- worst case the user opens it themselves.
+  # The `|| true` is what keeps a refused launch from failing an otherwise good
+  # install. The `must_succeed: false` keyword would read better but does not
+  # exist in released Homebrew (6.0.18) -- only on newer git checkouts -- and an
+  # unknown keyword makes the whole cask unreadable, so `brew install` fails
+  # outright rather than degrading. Shelling out is version-agnostic.
   postflight_steps do
     run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{appdir}}/Claude Code Dashboard.app"]
-    run "/usr/bin/open", args: ["{{appdir}}/Claude Code Dashboard.app"], must_succeed: false
+    run "/bin/sh", args: ["-c", "/usr/bin/open '{{appdir}}/Claude Code Dashboard.app' || true"]
   end
 
   # The autostart LaunchAgent is labelled after the product name, spaces and
