@@ -74,17 +74,10 @@ cask "claude-code-dashboard" do
       ]
 
   caveats <<~EOS
-    This build is not notarized by Apple, so this cask removed the quarantine
-    attribute after install to keep macOS from refusing to launch it. If you
-    would rather macOS check it, reinstall and clear the attribute yourself.
-
-    The widget stays empty until you wire its Claude Code hook into
-    ~/.claude/settings.json. Launch it and follow the on-screen
-    "Instructions to connect Claude Code" panel, or see:
+    The widget stays empty until you add its hook to ~/.claude/settings.json.
+    It shows the exact snippet to paste on first run:
       https://anothersava.github.io/claude-code-dashboard/pages/install
 
-    Before uninstalling, remove that hooks block from ~/.claude/settings.json
-    yourself -- brew cannot edit another tool's config, and the entries will
-    keep firing at a deleted script.
+    Not notarized by Apple, so this cask cleared the quarantine flag for you.
   EOS
 end
