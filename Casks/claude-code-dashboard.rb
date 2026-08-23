@@ -31,8 +31,14 @@ cask "claude-code-dashboard" do
   # This is a deliberate Gatekeeper bypass; the sha256 above is then the only
   # integrity check on the download. The durable fix is a Developer ID
   # signature plus notarization, after which this block should be deleted.
+  # The launch has to come after the strip or macOS refuses it. It is also
+  # deliberate: this is a menu-bar app with no Dock icon, so an install that
+  # ends without starting it leaves nothing on screen and nothing to click.
+  # must_succeed is off so a refused launch cannot fail an otherwise good
+  # install -- worst case the user opens it themselves.
   postflight_steps do
     run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{appdir}}/Claude Code Dashboard.app"]
+    run "/usr/bin/open", args: ["{{appdir}}/Claude Code Dashboard.app"], must_succeed: false
   end
 
   # The autostart LaunchAgent is labelled after the product name, spaces and
