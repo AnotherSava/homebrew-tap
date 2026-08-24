@@ -18,9 +18,15 @@ permissions:
 
 jobs:
   bump:
-    runs-on: ubuntu-latest
+    # macOS because `brew audit --cask` only runs there, and this job validates
+    # the rewritten cask itself: a push made with GITHUB_TOKEN does not trigger
+    # other workflows (GitHub's recursion guard), so tests.yml never sees an
+    # auto-bump. Validating here is the only thing standing between a bad bump
+    # and users.
+    runs-on: macos-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       UPSTREAM: AnotherSava/claude-code-dashboard
       CASK: Casks/claude-code-dashboard.rb
       RAW_VERSION: ${{ github.event.client_payload.version || inputs.version }}
@@ -55,6 +61,18 @@ jobs:
             git diff -- "$CASK"
             echo "CHANGED=true" >> "$GITHUB_ENV"
           fi
+
+      # Gate the commit on the same checks tests.yml runs. A failure here fails
+      # the job before anything is pushed, so a broken cask never reaches users.
+      - name: Validate the rewritten cask
+        if: env.CHANGED == 'true'
+        run: |
+          set -euo pipefail
+          tapdir="$(brew --repository)/Library/Taps/anothersava/homebrew-tap"
+          mkdir -p "$(dirname "$tapdir")"
+          ln -sfn "$GITHUB_WORKSPACE" "$tapdir"
+          brew style --cask anothersava/tap/claude-code-dashboard
+          brew audit --cask --strict --online anothersava/tap/claude-code-dashboard
 
       - name: Commit the bump
         if: env.CHANGED == 'true'
