@@ -3,6 +3,25 @@ name: Bump cask
 # Fired by the app repo when it publishes a release (repository_dispatch), or
 # by hand for a backfill. The commit goes through the Contents API rather than
 # `git push` so it lands GitHub-verified without a signing key in CI.
+#
+# THIS WORKFLOW ONCE WROTE AN EMPTY CASK AND REPORTED SUCCESS, four times, for
+# four releases. Every guard below that looks paranoid is there because of it:
+#
+#   * `base64 -w0` is GNU-only, and this job runs on macos-latest so it can call
+#     `brew audit`. BSD base64 rejected `-w`, the substitution produced an empty
+#     string, and `gh api` PUT `content=""` and got a 200. A failing command
+#     substitution *inside an argument word* does not trip `set -euo pipefail` —
+#     only a standalone assignment does — which is why every value below is
+#     computed into a variable on its own line before it is used.
+#   * Once main held a 0-byte cask, `sed` on it changed nothing, `git diff
+#     --quiet` said "no change", and the job took the nothing-to-do branch on
+#     every later run. The breakage made itself invisible. So the no-op decision
+#     now reads the cask's actual version instead of trusting a quiet diff, and
+#     an unreadable cask is a hard failure rather than a no-op.
+#   * A push made with GITHUB_TOKEN does not trigger other workflows (GitHub's
+#     recursion guard), so tests.yml never sees an auto-bump. Nothing downstream
+#     will catch a bad write; this job has to catch its own, which is what the
+#     final step does by reading back what it just committed.
 
 on:
   repository_dispatch:
@@ -18,11 +37,7 @@ permissions:
 
 jobs:
   bump:
-    # macOS because `brew audit --cask` only runs there, and this job validates
-    # the rewritten cask itself: a push made with GITHUB_TOKEN does not trigger
-    # other workflows (GitHub's recursion guard), so tests.yml never sees an
-    # auto-bump. Validating here is the only thing standing between a bad bump
-    # and users.
+    # macOS because `brew audit --cask` only runs there.
     runs-on: macos-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -33,6 +48,24 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+
+      # Refuse to work on a cask that is already broken, rather than quietly
+      # treating it as "nothing to do" — which is exactly how the empty file
+      # survived four releases.
+      - name: Check the cask we start from is intact
+        run: |
+          set -euo pipefail
+          if [ ! -s "$CASK" ]; then
+            echo "::error::$CASK is empty. Restore it from a good commit before bumping."
+            exit 1
+          fi
+          current=$(grep -oE '^  version "[^"]+"' "$CASK" | cut -d'"' -f2)
+          if [ -z "$current" ]; then
+            echo "::error::$CASK has no version line; refusing to rewrite a file I cannot parse."
+            exit 1
+          fi
+          echo "starting from version $current"
+          echo "CURRENT=$current" >> "$GITHUB_ENV"
 
       # The digest the release API reports is the real file's sha256 — no need
       # to download the DMG just to hash it.
@@ -52,20 +85,38 @@ jobs:
       - name: Rewrite the cask
         run: |
           set -euo pipefail
-          sed -i -E "s|^  version \".*\"$|  version \"$VERSION\"|" "$CASK"
-          sed -i -E "s|^  sha256 \".*\"$|  sha256 \"$SHA256\"|" "$CASK"
+          # No `sed -i`: GNU takes the suffix as an optional attached argument
+          # and BSD takes it as a separate one, so `sed -i -E` means two
+          # different things on the two platforms and this job runs on macOS.
+          # Write to a temp file and move it — that behaves the same everywhere.
+          sed -E \
+            -e "s|^  version \".*\"$|  version \"$VERSION\"|" \
+            -e "s|^  sha256 \".*\"$|  sha256 \"$SHA256\"|" \
+            "$CASK" > "$CASK.new"
+          mv "$CASK.new" "$CASK"
+
+          # Decide from what the file SAYS, not from whether it differs. A diff
+          # is quiet for two very different reasons — already at this version,
+          # or the sed matched nothing — and only one of them is fine.
+          got_version=$(grep -oE '^  version "[^"]+"' "$CASK" | cut -d'"' -f2)
+          got_sha=$(grep -oE '^  sha256 "[^"]+"' "$CASK" | cut -d'"' -f2)
+          if [ "$got_version" != "$VERSION" ] || [ "$got_sha" != "$SHA256" ]; then
+            echo "::error::rewrite did not take: version=$got_version sha256=$got_sha"
+            exit 1
+          fi
+
           if git diff --quiet -- "$CASK"; then
-            echo "cask already at $VERSION, nothing to do"
+            echo "cask already at $VERSION with this digest, nothing to commit"
             echo "CHANGED=false" >> "$GITHUB_ENV"
           else
             git diff -- "$CASK"
             echo "CHANGED=true" >> "$GITHUB_ENV"
           fi
 
-      # Gate the commit on the same checks tests.yml runs. A failure here fails
-      # the job before anything is pushed, so a broken cask never reaches users.
-      - name: Validate the rewritten cask
-        if: env.CHANGED == 'true'
+      # Runs whether or not anything changed. A no-op bump against a cask that
+      # has gone bad is precisely the case worth auditing, and skipping the
+      # check is what made "skipped" look like "passed".
+      - name: Validate the cask
         run: |
           set -euo pipefail
           tapdir="$(brew --repository)/Library/Taps/anothersava/homebrew-tap"
@@ -78,8 +129,47 @@ jobs:
         if: env.CHANGED == 'true'
         run: |
           set -euo pipefail
+          # Every value on its own assignment line: `set -e` aborts on a failed
+          # command substitution here, and does NOT when the same substitution
+          # sits inside an argument to another command.
+          #
+          # `openssl base64 -A` rather than `base64`: the GNU and BSD builds
+          # disagree about how to ask for unwrapped output, and this runner has
+          # the BSD one.
+          content=$(openssl base64 -A < "$CASK")
+          blob_sha=$(git rev-parse "HEAD:$CASK")
+          if [ -z "$content" ]; then
+            echo "::error::encoded cask is empty; refusing to commit."
+            exit 1
+          fi
+          # Round-trip before sending: proves the string we are about to PUT
+          # decodes back to the exact file on disk.
+          printf '%s' "$content" | openssl base64 -d -A > /tmp/roundtrip.rb
+          if ! cmp -s /tmp/roundtrip.rb "$CASK"; then
+            echo "::error::base64 round-trip does not match the cask on disk."
+            exit 1
+          fi
           gh api --method PUT "repos/${{ github.repository }}/contents/$CASK" \
             -f message="chore: bump claude-code-dashboard to $VERSION" \
-            -f content="$(base64 -w0 "$CASK")" \
-            -f sha="$(git rev-parse "HEAD:$CASK")" \
+            -f content="$content" \
+            -f sha="$blob_sha" \
             -f branch=main
+
+      # The commit above is the one thing nothing else watches, because a
+      # GITHUB_TOKEN push triggers no workflow. Read back what actually landed.
+      - name: Verify what was committed
+        if: env.CHANGED == 'true'
+        run: |
+          set -euo pipefail
+          committed=$(gh api "repos/${{ github.repository }}/contents/$CASK?ref=main" --jq '.content' | openssl base64 -d -A)
+          size=$(printf '%s' "$committed" | wc -c | tr -d ' ')
+          if [ "$size" -lt 100 ]; then
+            echo "::error::committed cask is $size bytes. main now holds a broken cask; restore it."
+            exit 1
+          fi
+          landed=$(printf '%s' "$committed" | grep -oE '^  version "[^"]+"' | cut -d'"' -f2)
+          if [ "$landed" != "$VERSION" ]; then
+            echo "::error::committed cask reads version $landed, expected $VERSION."
+            exit 1
+          fi
+          echo "main now holds $CASK at $landed ($size bytes)"
