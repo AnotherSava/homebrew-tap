@@ -15,7 +15,7 @@ cask "claude-code-dashboard" do
   # The macOS release job runs on macos-latest with no --target, so the binary
   # is Mach-O thin arm64. Drop this only if the build goes universal.
   depends_on arch: :arm64
-  depends_on macos: :big_sur
+  depends_on :macos
 
   app "Claude Code Dashboard.app"
 
