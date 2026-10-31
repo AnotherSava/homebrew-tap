@@ -9,34 +9,13 @@ on:
 jobs:
   audit:
     runs-on: macos-latest
-    env:
-      # `brew audit --online` calls the GitHub API to validate the homepage and
-      # the release URL. Unauthenticated it gets 60 requests/hour shared across
-      # everything else running on the runner's IP, which fails at random; the
-      # run token raises that to 5000/hour scoped to this job.
-      HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v5
 
-      # Symlink the working tree in as a tap so style/audit run against the
-      # commit under test rather than whatever is already published.
       - name: Install the working tree as a tap
-        run: |
-          set -euo pipefail
-          tapdir="$(brew --repository)/Library/Taps/anothersava/homebrew-tap"
-          mkdir -p "$(dirname "$tapdir")"
-          ln -sfn "$GITHUB_WORKSPACE" "$tapdir"
-          brew tap
-          # Homebrew refuses to load a cask from a non-official tap until it is trusted.
-          brew trust anothersava/tap
+        uses: ./.github/actions/install-tap
 
-      - name: brew style
-        run: brew style --cask anothersava/tap/claude-code-dashboard
-
-      # Deliberately not --new. That flag implies the notability check (this
-      # repo is well under the fork/watcher/star bar) and the signing check
-      # (the upstream build is ad-hoc signed, not notarized) — both of which
-      # this cask knowingly does not meet, and neither of which affects
-      # whether `brew install` works from a third-party tap.
-      - name: brew audit
-        run: brew audit --cask --strict --online anothersava/tap/claude-code-dashboard
+      - name: Validate the cask
+        uses: ./.github/actions/validate-cask
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}

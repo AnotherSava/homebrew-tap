@@ -1,0 +1,15 @@
+name: Install the working tree as a tap
+description: Symlink the checked-out working tree in as anothersava/tap and trust it, so brew style and brew audit run against the commit under test rather than whatever is already published. Run actions/checkout first.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        tapdir="$(brew --repository)/Library/Taps/anothersava/homebrew-tap"
+        mkdir -p "$(dirname "$tapdir")"
+        ln -sfn "$GITHUB_WORKSPACE" "$tapdir"
+        brew tap
+        # Homebrew refuses to load a cask from a non-official tap until it is trusted.
+        brew trust anothersava/tap
