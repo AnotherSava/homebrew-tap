@@ -122,6 +122,8 @@ jobs:
           tapdir="$(brew --repository)/Library/Taps/anothersava/homebrew-tap"
           mkdir -p "$(dirname "$tapdir")"
           ln -sfn "$GITHUB_WORKSPACE" "$tapdir"
+          # Homebrew refuses to load a cask from a non-official tap until it is trusted.
+          brew trust anothersava/tap
           brew style --cask anothersava/tap/claude-code-dashboard
           brew audit --cask --strict --online anothersava/tap/claude-code-dashboard
 
