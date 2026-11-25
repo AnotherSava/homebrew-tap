@@ -1,6 +1,6 @@
 cask "claude-code-dashboard" do
-  version "2.5.0"
-  sha256 "753f1bf091653239613f67241c02089bce82f059ccd4a07227cefaa53f867b31"
+  version "2.6.0"
+  sha256 "fcbe941439d6c41997fbfedbea1967ed711fad186b7404a49b132f1c1be08115"
 
   url "https://github.com/AnotherSava/claude-code-dashboard/releases/download/v#{version}/Claude.Code.Dashboard_#{version}_aarch64.dmg"
   name "Claude Code Dashboard"
